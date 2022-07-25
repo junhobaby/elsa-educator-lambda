@@ -4,6 +4,8 @@ import arrow
 import datetime
 from datetime import timedelta
 from sqlalchemy import create_engine, text
+from boto3.dynamodb.conditions import Key, Attr
+
 
 # ENVIRONMENT VARIABLES - AWS CREDENTIALS
 ACCESS_KEY = os.environ.get('ACCESS_KEY')
@@ -11,9 +13,9 @@ SECRET_KEY = os.environ.get('SECRET_KEY')
 REGION_NAME = os.environ.get('REGION_NAME')
 
 # ENVIRONMENT VARIABLES - RDS(Postgres) CREDENTIALS
-DB_USER = os.environ.get('DB_USER')
 DB_PASSWORD = os.environ.get('DB_PASSWORD')
-DB_HOST = os.environ.get('DB_HOST:')
+DB_USER = os.environ.get('DB_USER')
+DB_HOST = os.environ.get('DB_HOST')
 DB_PORT = os.environ.get('DB_PORT', 5432)  # sets default value to 5432
 DB_NAME = os.environ.get('DB_NAME', 'postgres')  # sets default value to `postgres`
 
@@ -42,6 +44,10 @@ def extract_rows(query_date: datetime) -> list:
 
         # ignore items in list that do not have `lastUpdatedAt` key
         if raw_data.get('lastUpdatedAt') is None:
+            continue
+
+        # ignore items in a list that do not have 'Address' key
+        if raw_data.get('address') is None:
             continue
 
         # transform lastUpdatedAt from str to date
@@ -102,13 +108,14 @@ def load_rows(rows: list):
     return rows_inserted_count
 
 
-def lambda_handler(event, context=None):
+def lambda_handler(event, context):
     """
     Extract data from DynamoDB and save updated rows into RDS
     """
 
     # date to filter from DynamoDB
-    query_date = arrow.get(event['executionDate']).date()
+    execution_date_event = event.get('executionDate', datetime.datetime.now())  # defaults to today's date
+    query_date = arrow.get(execution_date_event).date()
     rows_to_insert = extract_rows(query_date)  # extracts rows from Dynamo DB
     n_rows = load_rows(rows_to_insert)  # loads rows to RDS
     print({
@@ -117,5 +124,6 @@ def lambda_handler(event, context=None):
     })
     return {
         'executionDate': f'{query_date}',
-        'message': f'rows inserted: {n_rows:,}'
+        'message': f'rows inserted: {n_rows:,},',
+        'debug': f'{event.keys()}'
     }
