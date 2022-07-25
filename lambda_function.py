@@ -2,9 +2,9 @@ import os
 import boto3
 import arrow
 import datetime
-from datetime import timedelta
+import json
 from sqlalchemy import create_engine, text
-from boto3.dynamodb.conditions import Key, Attr
+from loguru import logger
 
 
 # ENVIRONMENT VARIABLES - AWS CREDENTIALS
@@ -35,38 +35,10 @@ def extract_rows(query_date: datetime) -> list:
     registration_table = dynamodb.Table('elsa-registrations-resources-prod-registrations-2019')
 
     # extract data from DynamoDB Table
+    # TODO: filter records from lastUpdatedAt yesterday
     response = registration_table.scan()
     educators_raw = response['Items']
-
-    # transform date strings into a datetime
-    parsed_educator_list = []
-    for raw_data in educators_raw:
-
-        # ignore items in list that do not have `lastUpdatedAt` key
-        if raw_data.get('lastUpdatedAt') is None:
-            continue
-
-        # ignore items in a list that do not have 'Address' key
-        if raw_data.get('address') is None:
-            continue
-
-        # transform lastUpdatedAt from str to date
-        raw_data['lastUpdatedAt'] = arrow.get(raw_data['lastUpdatedAt']).date()
-        parsed_educator_list.append(raw_data)
-
-    # filter items in list where last updated at was from yesterday
-    updated_yesterday_list = []
-    yesterday_date = query_date - timedelta(days=1)
-    for parsed_data in parsed_educator_list:
-
-        # ignore items in list where last updated at was not from yesterday
-        if parsed_data['lastUpdatedAt'] != yesterday_date:
-            continue
-
-        updated_yesterday_list.append(parsed_data)
-
-    # return filtered items as a list
-    return updated_yesterday_list
+    return educators_raw
 
 
 def load_rows(rows: list):
@@ -86,24 +58,14 @@ def load_rows(rows: list):
         # iterate through items in list
         for row in rows:
 
-            # access values from item
-            full_name = row['name']
-            phone = row['phone']
-            address = row['address']
-            school = row['preschoolId'].replace("'", "''")
-            status = row['status']
-            created_at = arrow.get(row['createdAt']).date()
-            updated_at = row['lastUpdatedAt']
-
             # create SQL query
-            sql_query = f"""
-                    insert into educator_signups(full_name, phone, address, school, status, created_at, updated_at)
-                    values('{full_name}', '{phone}', '{address}', '{school}', '{status}', '{created_at}', '{updated_at}')
-                    """
+            # O'Brian -> O''Brian
+            sql_query = f"""insert into raw_educator_history(raw_data) values('{json.dumps(row).replace("'", "''")}')"""
 
             # execute SQL query
             conn.execute(text(sql_query))
             rows_inserted_count += 1
+            logger.success(f'Inserted row successfully! Row count: {rows_inserted_count}')
 
     return rows_inserted_count
 
